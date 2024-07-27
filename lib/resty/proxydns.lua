@@ -5,12 +5,17 @@ local cache = ngx.shared.dns_cache
 local _M = {}
 local dns
 local config
+local target_ip
 function _M:config(dns)
     config = dns or {
         nameservers = {"114.114.114.114"},
         retrans = 3,
         timeout = 1500,
     }
+end
+
+function _M:redirect_all(ip) 
+    target_ip = ip
 end
 
 function _M:init_custom_domains(filename)
@@ -83,7 +88,14 @@ local function set_cache_answers(cache_key, answers)
     cache:set(cache_key, cjson.encode(cache_data), ttl)
 end
 
-local function create_cache_answers(cache_key) 
+local function create_cache_answers(qname, qtype) 
+    ngx.log(ngx.ERR, "--------- create_cache")
+    if target_ip and target_ip ~= "" then
+        ngx.log(ngx.ERR, "---------")
+        dns:create_a_answer(qname, 60, target_ip)
+        return true 
+    end
+    local cache_key = qname .. ":" .. qtype
     local cache_data = cache:get(cache_key)
     if cache_data then
         local data = cjson.decode(cache_data)
@@ -119,16 +131,15 @@ local function resolve_dns(qname, qtype)
     -- qname == 需要查询的域名, 例如 test.com
     -- qtype == 1 为 A 记录
     -- step 本地查询 cache 没有过期使用本地的数据
-    local cache_key = qname .. ":" .. qtype
-    local result = create_cache_answers(cache_key)
+    local result = create_cache_answers(qname, qtype)
     if result then 
         return 
     end
 
     -- 查询使用远程的数据
-       --  nameservers = {"114.114.114.114"}, 
-       --  retrans = 3, 
-       --  timeout = 1500,
+    --  nameservers = {"114.114.114.114"}, 
+    --  retrans = 3, 
+    --  timeout = 1500,
     local r, err = resolver:new(config)
 
     if not r then
@@ -143,6 +154,7 @@ local function resolve_dns(qname, qtype)
         return nil
     end
 
+    local cache_key = qname .. ":" .. qtype
     set_cache_answers(cache_key, answers)
     create_answers(answers)
 end
